@@ -37,6 +37,7 @@ services:
     <<: *runtime
     environment:
       <<: *runtime-env
+      ENCURTADOR_APP_ORIGIN: "http://localhost:${ENCURTADOR_APP_PORT:-8000}"
       ENCURTADOR_VITE_ORIGIN: "http://localhost:${ENCURTADOR_VITE_PORT:-5173}"
     command: ["./node_modules/.bin/vp", "dev", "--host", "0.0.0.0", "--port", "5173", "--strictPort"]
     ports:

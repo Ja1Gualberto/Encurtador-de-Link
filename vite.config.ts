@@ -7,6 +7,9 @@ import laravel from 'laravel-vite-plugin';
 import { bunny } from 'laravel-vite-plugin/fonts';
 import { defineConfig, lazyPlugins } from 'vite-plus';
 
+const appOrigin = process.env.ENCURTADOR_APP_ORIGIN;
+const viteOrigin = process.env.ENCURTADOR_VITE_ORIGIN;
+
 export default defineConfig({
     plugins: lazyPlugins(() => [
         laravel({
@@ -29,7 +32,11 @@ export default defineConfig({
         }),
     ]),
     server: {
-        origin: process.env.ENCURTADOR_VITE_ORIGIN,
+        origin: viteOrigin,
+        cors:
+            appOrigin && viteOrigin
+                ? { origin: [appOrigin, viteOrigin] }
+                : undefined,
         watch: {
             ignored: [
                 '**/.agents/**',
