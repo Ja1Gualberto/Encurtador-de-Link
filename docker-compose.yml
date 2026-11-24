@@ -1,0 +1,98 @@
+name: encurtador
+
+x-runtime: &runtime
+  image: encurtador-dev
+  pull_policy: never
+  user: "${ENCURTADOR_UID:-1000}:${ENCURTADOR_GID:-1000}"
+  init: true
+  working_dir: /var/www/html
+  environment: &runtime-env
+    HOME: /tmp
+    COMPOSER_HOME: /tmp/composer
+    npm_config_cache: /tmp/npm
+    # Não execute o instalador interativo que altera o código do starter kit.
+    LARAVEL_INSTALLER_DEFER_HOOKS: "1"
+  volumes:
+    - .:/var/www/html
+
+services:
+  app:
+    <<: *runtime
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${ENCURTADOR_APP_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  vite:
+    <<: *runtime
+    environment:
+      <<: *runtime-env
+      ENCURTADOR_VITE_ORIGIN: "http://localhost:${ENCURTADOR_VITE_PORT:-5173}"
+    command: ["./node_modules/.bin/vp", "dev", "--host", "0.0.0.0", "--port", "5173", "--strictPort"]
+    ports:
+      - "127.0.0.1:${ENCURTADOR_VITE_PORT:-5173}:5173"
+    pre_stop:
+      # Volta a servir os assets compilados se apenas o Vite for parado.
+      - command: rm -f public/hot
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173/@vite/client').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  worker:
+    <<: *runtime
+    command: ["php", "artisan", "queue:work", "--tries=3", "--timeout=60"]
+    depends_on:
+      app:
+        condition: service_healthy
+    stop_grace_period: 70s
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: "${MYSQL_DATABASE:-encurta_link}"
+      MYSQL_USER: "${MYSQL_USER:-encurta}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD:-encurta_local}"
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+      MYSQL_ROOT_HOST: localhost
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          MYSQL_PWD="$${MYSQL_PASSWORD}" mysql --protocol=TCP --host=127.0.0.1
+          --user="$${MYSQL_USER}" --database="$${MYSQL_DATABASE}" --execute='SELECT 1' >/dev/null
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  phpmyadmin:
+    image: phpmyadmin:5.2-apache
+    environment:
+      PMA_HOST: mysql
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${ENCURTADOR_PHPMYADMIN_PORT:-8081}:80"
+    healthcheck:
+      test: ["CMD", "php", "-d", "allow_url_fopen=1", "-r", "exit(@file_get_contents('http://127.0.0.1/') === false ? 1 : 0);"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+volumes:
+  mysql-data:

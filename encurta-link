@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_DIR="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd)"
+
+BANNER_ARTS=()
+add_banner_art() {
+    local art
+    IFS= read -r -d '' art || true
+    BANNER_ARTS+=("${art%$'\n'}")
+}
+
+add_banner_art <<'EOF'
+████  █  █   ███  █  █  ███   █████   ██        █     ███  █  █  █  █
+█     ██ █  █     █  █  █  █    █    █  █       █      █   ██ █  █ █
+███   █ ██  █     █  █  ███     █    ████  ███  █      █   █ ██  ██
+█     █  █  █     █  █  █ █     █    █  █       █      █   █  █  █ █
+████  █  █   ███   ██   █  █    █    █  █       ████  ███  █  █  █  █
+EOF
+
+add_banner_art <<'EOF'
+ ___         __          __   ____    _               ___
+|__   |\ |  /     |  |  |__\   |     /_\   ___  |      |   |\ |  | /
+|___  | \|  \__   \__/  |  \   |    /   \       |___  _|_  | \|  | \
+EOF
+
+add_banner_art <<'EOF'
+.---------------------------.
+|  E N C U R T A - L I N K  |
+'---------------------------'
+EOF
+
+banner() {
+    local blue_bold='' dim='' reset=''
+    if [[ -t 1 && "${TERM:-dumb}" != dumb && -z "${NO_COLOR:-}" ]]; then
+        blue_bold=$'\e[1;34m'
+        dim=$'\e[2m'
+        reset=$'\e[0m'
+    fi
+
+    local art="${BANNER_ARTS[RANDOM % ${#BANNER_ARTS[@]}]}"
+    printf '%s%s%s\n%sencurta-link — ambiente de desenvolvimento%s\n\n' \
+        "$blue_bold" "$art" "$reset" "$dim" "$reset"
+}
+
+usage() {
+    banner
+    cat <<'EOF'
+Uso: ./encurta-link <comando> [argumentos]
+
+  setup       Prepara o .env, instala dependências, migra o banco e compila os assets
+  dev         Sobe todos os serviços (ou os serviços informados)
+  db          Sobe apenas MySQL e phpMyAdmin
+  stop        Para os serviços sem removê-los
+  down        Para e remove os containers
+  restart     Reinicia os serviços
+  build       Reconstrói a imagem de desenvolvimento
+  status      Mostra o status dos containers
+  logs        Acompanha os logs (ex.: ./encurta-link logs app worker)
+  config      Inspeciona o Compose (use --quiet para validar sem exibir valores)
+  artisan     Executa php artisan <argumentos>
+  composer    Executa composer <argumentos>
+  npm         Executa npm <argumentos>
+  php         Executa php <argumentos>
+  test        Executa php artisan test <argumentos>
+  shell       Abre um Bash dentro do container
+  exec        Executa um comando arbitrário dentro do container
+  help        Mostra esta ajuda
+EOF
+}
+
+fail() {
+    printf '[encurta-link] %s\n' "$*" >&2
+    exit 1
+}
+
+compose() {
+    docker compose --project-directory "$PROJECT_DIR" -f "$PROJECT_DIR/docker-compose.yml" "$@"
+}
+
+tty_flags=()
+if [[ ! -t 0 || ! -t 1 ]]; then
+    tty_flags=(-T)
+fi
+
+run_in_container() {
+    local running
+    running="$(compose ps --status running --quiet app)"
+    if [[ -n "$running" ]]; then
+        compose exec "${tty_flags[@]}" app "$@"
+    else
+        compose run --rm --no-deps "${tty_flags[@]}" app "$@"
+    fi
+}
+
+setup() {
+    if [[ ! -e "$PROJECT_DIR/.env" ]]; then
+        cp -- "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
+    fi
+
+    compose build app
+    compose run --rm "${tty_flags[@]}" \
+        --env "TERM=${TERM:-dumb}" --env "NO_COLOR=${NO_COLOR:-}" \
+        app bash docker/dev/setup.sh
+}
+
+dev() {
+    [[ -f "$PROJECT_DIR/.env" && -f "$PROJECT_DIR/vendor/autoload.php" && -x "$PROJECT_DIR/node_modules/.bin/vp" ]] \
+        || fail "Execute ./encurta-link setup antes de iniciar o ambiente."
+
+    compose up -d --wait --wait-timeout 90 "$@"
+}
+
+command="${1:-help}"
+case "$command" in
+    help|-h|--help) usage; exit 0 ;;
+    setup|dev|db|stop|down|restart|build|status|logs|config|artisan|composer|npm|php|test|shell|exec) ;;
+    *) fail "Comando desconhecido: $command. Veja ./encurta-link help." ;;
+esac
+shift
+
+docker compose version >/dev/null 2>&1 \
+    || fail "Docker Compose não encontrado. Instale o plugin 'docker compose'."
+
+export ENCURTADOR_UID="${ENCURTADOR_UID:-$(id -u)}"
+export ENCURTADOR_GID="${ENCURTADOR_GID:-$(id -g)}"
+
+case "$command" in
+    setup) setup ;;
+    dev) dev "$@" ;;
+    db) compose up -d --wait --wait-timeout 90 mysql phpmyadmin ;;
+    stop|down|restart|config) compose "$command" "$@" ;;
+    build) compose build "$@" app ;;
+    status) compose ps "$@" ;;
+    logs) compose logs --follow --tail=100 "$@" ;;
+    artisan) run_in_container php artisan "$@" ;;
+    composer|npm|php) run_in_container "$command" "$@" ;;
+    test) run_in_container php artisan test "$@" ;;
+    shell) run_in_container bash "$@" ;;
+    exec)
+        [[ $# -gt 0 ]] || fail "Informe o comando: ./encurta-link exec <comando> [argumentos]."
+        run_in_container "$@"
+        ;;
+esac

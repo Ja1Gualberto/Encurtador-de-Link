@@ -29,6 +29,7 @@ export default defineConfig({
         }),
     ]),
     server: {
+        origin: process.env.ENCURTADOR_VITE_ORIGIN,
         watch: {
             ignored: [
                 '**/.agents/**',
